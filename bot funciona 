@@ -1,0 +1,73 @@
+import requests, wikipedia
+from bs4 import BeautifulSoup
+from telegram import Update
+from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
+
+wikipedia.set_lang("es")
+TOKEN = "8278289356:AAE2WuqgJ6XXzSIG0L7YuFzDeY9LX6Ch4WY"
+
+def buscar_diccionario(p):
+    r = requests.get(f"https://api.dictionaryapi.dev/api/v2/entries/es/{p}")
+    if r.status_code == 200:
+        return r.json()[0]["meanings"][0]["definitions"][0]["definition"]
+    return None
+
+def buscar_wikipedia(q):
+    try:
+        return wikipedia.summary(q, sentences=4)
+    except:
+        return None
+
+def buscar_web(q):
+    r = requests.get(f"https://duckduckgo.com/html/?q={q}", headers={"User-Agent":"Mozilla"})
+    s = BeautifulSoup(r.text, "html.parser").select(".result__snippet")
+    return "\n\n".join([x.text.strip() for x in s[:3]]) if s else None
+
+def traducir_al_espanol(texto):
+    r = requests.get(
+        "https://translate.googleapis.com/translate_a/single",
+        params={"client": "gtx", "sl": "auto", "tl": "es", "dt": "t", "q": texto}
+    )
+    if r.status_code == 200:
+        return r.json()[0][0][0]
+    return None
+
+async def responder(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    t = update.message.text.strip()
+
+    if t.lower().startswith("traduce esto a español:"):
+        original = t.split(":", 1)[1].strip()
+        traduccion = traducir_al_espanol(original)
+        r = traduccion if traduccion else "No pude traducir ese texto."
+        await update.message.reply_text(r)
+        return
+
+    if t.lower() in ["hola", "buenas", "qué tal"]:
+        await update.message.reply_text(
+            "Hola. Puedes preguntarme sobre cualquier tema, palabra o duda. También puedo traducir textos si escribes: traduce esto a español: [tu texto]"
+        )
+        return
+
+    if " o " in t and len(t.split()) == 3:
+        a, _, b = t.lower().split()
+        r = f"Se escribe {a}" if buscar_diccionario(a) else f"Se escribe {b}"
+        await update.message.reply_text(r)
+        return
+
+    partes = []
+
+    d = buscar_diccionario(t.lower())
+    if d: partes.append(f"Definición:\n{d}")
+
+    w = buscar_wikipedia(t)
+    if w: partes.append(f"\nWikipedia:\n{w}")
+
+    web = buscar_web(t)
+    if web: partes.append(f"\nInformación adicional:\n{web}")
+
+    r = "\n\n".join(partes) if partes else "No encontré información clara sobre ese tema."
+    await update.message.reply_text(r)
+
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(MessageHandler(filters.TEXT, responder))
+app.run_polling()
